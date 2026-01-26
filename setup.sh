@@ -230,6 +230,10 @@ check_tools() {
   echo
   info "SoapySDR:"
   check_required "SoapySDRUtil" "SoapySDR CLI utility" SoapySDRUtil
+
+  echo
+  info "GSM/LTE (optional):"
+  check_optional "srsran_cell_search" "srsRAN LTE cell scanner" srsran_cell_search cell_search
   echo
 }
 
@@ -413,7 +417,7 @@ install_multimon_ng_from_source_macos() {
 }
 
 install_macos_packages() {
-  TOTAL_STEPS=14
+  TOTAL_STEPS=15
   CURRENT_STEP=0
 
   progress "Checking Homebrew"
@@ -477,6 +481,24 @@ install_macos_packages() {
 
   progress "Installing gpsd"
   brew_install gpsd
+
+  progress "Installing srsRAN (optional - for GSM SPY)"
+  if ! cmd_exists srsran_cell_search && ! cmd_exists cell_search; then
+    echo
+    info "srsRAN provides LTE cell scanning for the GSM SPY feature."
+    info "Note: srsRAN has limited macOS support and may not work properly."
+    if ask_yes_no "Do you want to try installing srsRAN?"; then
+      (brew_install srsran) || warn "srsRAN not available via Homebrew"
+      if ! cmd_exists srsran_cell_search; then
+        warn "srsRAN cell_search not available. GSM SPY will have limited functionality."
+        info "For full LTE support, use Linux with an appropriate SDR (LimeSDR, HackRF, etc.)"
+      fi
+    else
+      warn "Skipping srsRAN. GSM SPY will have limited functionality on macOS."
+    fi
+  else
+    ok "srsRAN already installed"
+  fi
 
   warn "macOS note: hcitool/hciconfig are Linux (BlueZ) utilities and often unavailable on macOS."
   info "TSCM BLE scanning uses bleak library (installed via pip) for manufacturer data detection."
@@ -581,6 +603,50 @@ install_acarsdec_from_source_debian() {
       ok "acarsdec installed successfully."
     else
       warn "Failed to build acarsdec from source. ACARS decoding will not be available."
+    fi
+  )
+}
+
+install_srsran_from_source_debian() {
+  info "Building srsRAN 4G from source (for GSM SPY LTE scanning)..."
+
+  # Install build dependencies
+  apt_install build-essential git cmake libfftw3-dev libmbedtls-dev \
+    libboost-program-options-dev libconfig++-dev libsctp-dev \
+    libuhd-dev uhd-host libsoapysdr-dev soapysdr-tools
+
+  # Run in subshell to isolate EXIT trap
+  (
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    info "Cloning srsRAN 4G..."
+    git clone --depth 1 https://github.com/srsran/srsRAN_4G.git "$tmp_dir/srsRAN_4G" >/dev/null 2>&1 \
+      || { warn "Failed to clone srsRAN 4G"; exit 1; }
+
+    cd "$tmp_dir/srsRAN_4G"
+    mkdir -p build && cd build
+
+    info "Configuring srsRAN (this may take a moment)..."
+    if cmake .. -DENABLE_UHD=OFF -DENABLE_SOAPYSDR=ON >/dev/null 2>&1; then
+      info "Compiling srsRAN (this takes 10-20 minutes)..."
+      if make -j$(nproc) srsran_cell_search >/dev/null 2>&1; then
+        $SUDO install -m 0755 lib/src/phy/rf/srsran_cell_search /usr/local/bin/srsran_cell_search 2>/dev/null || \
+        $SUDO install -m 0755 srsue/src/srsran_cell_search /usr/local/bin/srsran_cell_search 2>/dev/null || \
+        $SUDO find . -name "cell_search" -type f -executable -exec install -m 0755 {} /usr/local/bin/srsran_cell_search \; 2>/dev/null || true
+
+        if cmd_exists srsran_cell_search; then
+          ok "srsRAN cell_search installed successfully."
+        else
+          warn "srsRAN built but cell_search binary not found in expected location."
+          info "You may need to locate and install it manually from: $tmp_dir/srsRAN_4G/build"
+        fi
+      else
+        warn "Failed to compile srsRAN. GSM SPY LTE scanning will not be available."
+        info "You can try building manually from: https://github.com/srsran/srsRAN_4G"
+      fi
+    else
+      warn "Failed to configure srsRAN. Check build dependencies."
     fi
   )
 }
@@ -720,7 +786,7 @@ install_debian_packages() {
     export NEEDRESTART_MODE=a
   fi
 
-  TOTAL_STEPS=19
+  TOTAL_STEPS=20
   CURRENT_STEP=0
 
   progress "Updating APT package lists"
@@ -856,6 +922,21 @@ install_debian_packages() {
     install_aiscatcher_from_source_debian
   else
     ok "AIS-catcher already installed"
+  fi
+
+  progress "Installing srsRAN (optional - for GSM SPY)"
+  if ! cmd_exists srsran_cell_search && ! cmd_exists cell_search; then
+    echo
+    info "srsRAN provides LTE cell scanning for the GSM SPY feature."
+    info "Building from source requires ~2GB disk space and takes 10-20 minutes."
+    if ask_yes_no "Do you want to install srsRAN?"; then
+      install_srsran_from_source_debian
+    else
+      warn "Skipping srsRAN. GSM SPY will have limited functionality."
+      info "You can install it later from: https://github.com/srsran/srsRAN_4G"
+    fi
+  else
+    ok "srsRAN already installed"
   fi
 
   progress "Configuring udev rules"

@@ -125,6 +125,15 @@
             </div>
 
             <div class="control-group">
+                <span class="control-group-label">LOCATION</span>
+                <div class="control-group-items">
+                    <input type="text" id="obsLat" value="51.5074" onchange="updateObserverLoc()" style="width: 70px;" title="Latitude" placeholder="Lat">
+                    <input type="text" id="obsLon" value="-0.1278" onchange="updateObserverLoc()" style="width: 70px;" title="Longitude" placeholder="Lon">
+                    <button class="gps-btn" onclick="useGPS()" title="Use GPS location">GPS</button>
+                </div>
+            </div>
+
+            <div class="control-group">
                 <span class="control-group-label">REGION</span>
                 <div class="control-group-items">
                     <select id="regionSelect" onchange="updateRegion()">
@@ -267,6 +276,8 @@
                     const parsed = JSON.parse(saved);
                     if (parsed.lat && parsed.lon) {
                         observerLocation = parsed;
+                        document.getElementById('obsLat').value = parsed.lat;
+                        document.getElementById('obsLon').value = parsed.lon;
                     }
                 } catch (e) {}
             }
@@ -403,6 +414,41 @@
                     body: JSON.stringify({ mode })
                 });
             }
+        }
+
+        function updateObserverLoc() {
+            const lat = parseFloat(document.getElementById('obsLat').value);
+            const lon = parseFloat(document.getElementById('obsLon').value);
+            if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                observerLocation = { lat, lon };
+                localStorage.setItem('gsm_observerLocation', JSON.stringify(observerLocation));
+                if (observerMarker) {
+                    observerMarker.setLatLng([lat, lon]);
+                }
+                cellMap.setView([lat, lon], cellMap.getZoom());
+                toggleRings();
+            }
+        }
+
+        function useGPS() {
+            if (!navigator.geolocation) {
+                alert('Geolocation is not supported by your browser');
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const lat = position.coords.latitude.toFixed(6);
+                    const lon = position.coords.longitude.toFixed(6);
+                    document.getElementById('obsLat').value = lat;
+                    document.getElementById('obsLon').value = lon;
+                    updateObserverLoc();
+                },
+                function(error) {
+                    alert('Unable to get GPS position: ' + error.message);
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
         }
 
         function toggleRings() {
