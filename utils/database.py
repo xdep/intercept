@@ -385,6 +385,175 @@ def init_db() -> None:
             ON dsc_alerts(source_mmsi, received_at)
         ''')
 
+        # =====================================================================
+        # GSM SPY (Cellular Intelligence) Tables
+        # =====================================================================
+
+        # GSM Scan Sessions - Track scanning sessions
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_scan_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                stopped_at TIMESTAMP,
+                status TEXT DEFAULT 'running',
+                device_index INTEGER,
+                sdr_type TEXT,
+                gain REAL,
+                region TEXT,
+                bands TEXT,
+                privacy_mode TEXT DEFAULT 'standard',
+                towers_found INTEGER DEFAULT 0,
+                clients_observed INTEGER DEFAULT 0,
+                alerts_generated INTEGER DEFAULT 0,
+                metadata TEXT
+            )
+        ''')
+
+        # GSM Detected Towers - Towers found via srsRAN scans
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_detected_towers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                earfcn INTEGER NOT NULL,
+                pci INTEGER NOT NULL,
+                frequency_mhz REAL,
+                bandwidth_mhz REAL,
+                rsrp REAL,
+                rsrq REAL,
+                snr REAL,
+                mcc INTEGER,
+                mnc INTEGER,
+                tac INTEGER,
+                cell_id INTEGER,
+                enb_id INTEGER,
+                sector_id INTEGER,
+                plmn TEXT,
+                encryption TEXT,
+                mib_data TEXT,
+                sib_data TEXT,
+                stingray_score INTEGER DEFAULT 0,
+                in_database INTEGER DEFAULT 0,
+                database_match_distance_km REAL,
+                fingerprint TEXT,
+                metadata TEXT,
+                UNIQUE(earfcn, pci),
+                FOREIGN KEY (session_id) REFERENCES gsm_scan_sessions(id)
+            )
+        ''')
+
+        # GSM Observed Clients - Mobile devices detected
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                rnti INTEGER,
+                tmsi TEXT,
+                imsi TEXT,
+                associated_pci INTEGER,
+                associated_earfcn INTEGER,
+                rsrp REAL,
+                timing_advance INTEGER,
+                distance_estimate_m REAL,
+                uplink_active INTEGER DEFAULT 0,
+                metadata TEXT,
+                FOREIGN KEY (session_id) REFERENCES gsm_scan_sessions(id)
+            )
+        ''')
+
+        # GSM Security Alerts - Stingray detection, encryption issues, etc.
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                alert_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                tower_id INTEGER,
+                client_id INTEGER,
+                title TEXT NOT NULL,
+                description TEXT,
+                score INTEGER,
+                evidence TEXT,
+                acknowledged INTEGER DEFAULT 0,
+                acknowledged_at TIMESTAMP,
+                acknowledged_by TEXT,
+                notes TEXT,
+                FOREIGN KEY (session_id) REFERENCES gsm_scan_sessions(id),
+                FOREIGN KEY (tower_id) REFERENCES gsm_detected_towers(id),
+                FOREIGN KEY (client_id) REFERENCES gsm_clients(id)
+            )
+        ''')
+
+        # GSM RF Fingerprints - Unique signatures for towers
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_rf_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tower_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                fingerprint_hash TEXT NOT NULL UNIQUE,
+                pci INTEGER,
+                earfcn INTEGER,
+                bandwidth_mhz REAL,
+                cp_type TEXT,
+                antenna_ports INTEGER,
+                rsrp_profile TEXT,
+                timing_characteristics TEXT,
+                metadata TEXT,
+                FOREIGN KEY (tower_id) REFERENCES gsm_detected_towers(id)
+            )
+        ''')
+
+        # GSM Silent SMS Detection Log
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gsm_silent_sms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                client_id INTEGER,
+                tower_pci INTEGER,
+                sms_type INTEGER,
+                source_indicator TEXT,
+                metadata TEXT,
+                FOREIGN KEY (session_id) REFERENCES gsm_scan_sessions(id),
+                FOREIGN KEY (client_id) REFERENCES gsm_clients(id)
+            )
+        ''')
+
+        # GSM indexes for performance
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_towers_session
+            ON gsm_detected_towers(session_id)
+        ''')
+
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_towers_earfcn_pci
+            ON gsm_detected_towers(earfcn, pci)
+        ''')
+
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_towers_stingray
+            ON gsm_detected_towers(stingray_score)
+        ''')
+
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_clients_session
+            ON gsm_clients(session_id)
+        ''')
+
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_alerts_session
+            ON gsm_alerts(session_id, severity)
+        ''')
+
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_gsm_alerts_unack
+            ON gsm_alerts(acknowledged, created_at)
+        ''')
+
         logger.info("Database initialized successfully")
 
 
@@ -1677,3 +1846,355 @@ def cleanup_old_dsc_alerts(max_age_days: int = 30) -> int:
               AND received_at < datetime('now', ?)
         ''', (f'-{max_age_days} days',))
         return cursor.rowcount
+
+
+# =============================================================================
+# GSM SPY Functions
+# =============================================================================
+
+def create_gsm_session(
+    device_index: int = 0,
+    sdr_type: str = 'rtlsdr',
+    gain: float = 40.0,
+    region: str | None = None,
+    bands: list[int] | None = None,
+    privacy_mode: str = 'standard'
+) -> int:
+    """
+    Create a new GSM scan session.
+
+    Returns:
+        The ID of the created session
+    """
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO gsm_scan_sessions
+            (device_index, sdr_type, gain, region, bands, privacy_mode)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            device_index, sdr_type, gain, region,
+            json.dumps(bands) if bands else None, privacy_mode
+        ))
+        return cursor.lastrowid
+
+
+def update_gsm_session(
+    session_id: int,
+    status: str | None = None,
+    towers_found: int | None = None,
+    clients_observed: int | None = None,
+    alerts_generated: int | None = None,
+    stopped: bool = False
+) -> bool:
+    """Update a GSM scan session."""
+    updates = []
+    params = []
+
+    if status:
+        updates.append('status = ?')
+        params.append(status)
+    if towers_found is not None:
+        updates.append('towers_found = ?')
+        params.append(towers_found)
+    if clients_observed is not None:
+        updates.append('clients_observed = ?')
+        params.append(clients_observed)
+    if alerts_generated is not None:
+        updates.append('alerts_generated = ?')
+        params.append(alerts_generated)
+    if stopped:
+        updates.append('stopped_at = CURRENT_TIMESTAMP')
+
+    if not updates:
+        return False
+
+    params.append(session_id)
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            f'UPDATE gsm_scan_sessions SET {", ".join(updates)} WHERE id = ?',
+            params
+        )
+        return cursor.rowcount > 0
+
+
+def get_gsm_session(session_id: int) -> dict | None:
+    """Get a GSM scan session by ID."""
+    with get_db() as conn:
+        cursor = conn.execute('SELECT * FROM gsm_scan_sessions WHERE id = ?', (session_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            'id': row['id'],
+            'started_at': row['started_at'],
+            'stopped_at': row['stopped_at'],
+            'status': row['status'],
+            'device_index': row['device_index'],
+            'sdr_type': row['sdr_type'],
+            'gain': row['gain'],
+            'region': row['region'],
+            'bands': json.loads(row['bands']) if row['bands'] else [],
+            'privacy_mode': row['privacy_mode'],
+            'towers_found': row['towers_found'],
+            'clients_observed': row['clients_observed'],
+            'alerts_generated': row['alerts_generated'],
+            'metadata': json.loads(row['metadata']) if row['metadata'] else None
+        }
+
+
+def add_gsm_tower(
+    session_id: int,
+    earfcn: int,
+    pci: int,
+    frequency_mhz: float | None = None,
+    bandwidth_mhz: float | None = None,
+    rsrp: float | None = None,
+    rsrq: float | None = None,
+    snr: float | None = None,
+    mcc: int | None = None,
+    mnc: int | None = None,
+    tac: int | None = None,
+    cell_id: int | None = None,
+    encryption: str | None = None,
+    mib_data: str | None = None,
+    stingray_score: int = 0,
+    in_database: bool = False,
+    database_match_distance_km: float | None = None,
+    fingerprint: str | None = None
+) -> int:
+    """
+    Add or update a detected cell tower.
+
+    Returns:
+        The ID of the tower record
+    """
+    enb_id = cell_id // 256 if cell_id else None
+    sector_id = cell_id % 256 if cell_id else None
+    plmn = f"{mcc}-{mnc}" if mcc and mnc else None
+
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO gsm_detected_towers
+            (session_id, earfcn, pci, frequency_mhz, bandwidth_mhz, rsrp, rsrq, snr,
+             mcc, mnc, tac, cell_id, enb_id, sector_id, plmn, encryption, mib_data,
+             stingray_score, in_database, database_match_distance_km, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(earfcn, pci) DO UPDATE SET
+                last_seen = CURRENT_TIMESTAMP,
+                rsrp = excluded.rsrp,
+                rsrq = excluded.rsrq,
+                snr = excluded.snr,
+                stingray_score = excluded.stingray_score,
+                mib_data = COALESCE(excluded.mib_data, gsm_detected_towers.mib_data),
+                encryption = COALESCE(excluded.encryption, gsm_detected_towers.encryption)
+        ''', (
+            session_id, earfcn, pci, frequency_mhz, bandwidth_mhz, rsrp, rsrq, snr,
+            mcc, mnc, tac, cell_id, enb_id, sector_id, plmn, encryption, mib_data,
+            stingray_score, 1 if in_database else 0, database_match_distance_km, fingerprint
+        ))
+        return cursor.lastrowid
+
+
+def get_gsm_towers(
+    session_id: int | None = None,
+    min_stingray_score: int | None = None,
+    limit: int = 100
+) -> list[dict]:
+    """Get detected GSM towers with optional filters."""
+    conditions = []
+    params = []
+
+    if session_id is not None:
+        conditions.append('session_id = ?')
+        params.append(session_id)
+    if min_stingray_score is not None:
+        conditions.append('stingray_score >= ?')
+        params.append(min_stingray_score)
+
+    where_clause = f'WHERE {" AND ".join(conditions)}' if conditions else ''
+    params.append(limit)
+
+    with get_db() as conn:
+        cursor = conn.execute(f'''
+            SELECT * FROM gsm_detected_towers
+            {where_clause}
+            ORDER BY last_seen DESC
+            LIMIT ?
+        ''', params)
+
+        return [dict(row) for row in cursor]
+
+
+def add_gsm_client(
+    session_id: int,
+    rnti: int | None = None,
+    tmsi: str | None = None,
+    imsi: str | None = None,
+    associated_pci: int | None = None,
+    associated_earfcn: int | None = None,
+    rsrp: float | None = None,
+    timing_advance: int | None = None,
+    distance_estimate_m: float | None = None
+) -> int:
+    """
+    Add or update an observed GSM client.
+
+    Returns:
+        The ID of the client record
+    """
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO gsm_clients
+            (session_id, rnti, tmsi, imsi, associated_pci, associated_earfcn,
+             rsrp, timing_advance, distance_estimate_m)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session_id, rnti, tmsi, imsi, associated_pci, associated_earfcn,
+            rsrp, timing_advance, distance_estimate_m
+        ))
+        return cursor.lastrowid
+
+
+def get_gsm_clients(
+    session_id: int | None = None,
+    limit: int = 100
+) -> list[dict]:
+    """Get observed GSM clients."""
+    if session_id is not None:
+        with get_db() as conn:
+            cursor = conn.execute('''
+                SELECT * FROM gsm_clients
+                WHERE session_id = ?
+                ORDER BY last_seen DESC
+                LIMIT ?
+            ''', (session_id, limit))
+            return [dict(row) for row in cursor]
+    else:
+        with get_db() as conn:
+            cursor = conn.execute('''
+                SELECT * FROM gsm_clients
+                ORDER BY last_seen DESC
+                LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor]
+
+
+def add_gsm_alert(
+    session_id: int,
+    alert_type: str,
+    severity: str,
+    title: str,
+    description: str | None = None,
+    tower_id: int | None = None,
+    client_id: int | None = None,
+    score: int | None = None,
+    evidence: dict | None = None
+) -> int:
+    """
+    Add a GSM security alert.
+
+    Returns:
+        The ID of the alert record
+    """
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO gsm_alerts
+            (session_id, alert_type, severity, title, description, tower_id,
+             client_id, score, evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session_id, alert_type, severity, title, description,
+            tower_id, client_id, score,
+            json.dumps(evidence) if evidence else None
+        ))
+        return cursor.lastrowid
+
+
+def get_gsm_alerts(
+    session_id: int | None = None,
+    severity: str | None = None,
+    acknowledged: bool | None = None,
+    limit: int = 100
+) -> list[dict]:
+    """Get GSM security alerts with optional filters."""
+    conditions = []
+    params = []
+
+    if session_id is not None:
+        conditions.append('session_id = ?')
+        params.append(session_id)
+    if severity is not None:
+        conditions.append('severity = ?')
+        params.append(severity)
+    if acknowledged is not None:
+        conditions.append('acknowledged = ?')
+        params.append(1 if acknowledged else 0)
+
+    where_clause = f'WHERE {" AND ".join(conditions)}' if conditions else ''
+    params.append(limit)
+
+    with get_db() as conn:
+        cursor = conn.execute(f'''
+            SELECT * FROM gsm_alerts
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', params)
+
+        results = []
+        for row in cursor:
+            alert = dict(row)
+            alert['evidence'] = json.loads(row['evidence']) if row['evidence'] else None
+            results.append(alert)
+        return results
+
+
+def acknowledge_gsm_alert(alert_id: int, notes: str | None = None, acknowledged_by: str | None = None) -> bool:
+    """Acknowledge a GSM security alert."""
+    with get_db() as conn:
+        cursor = conn.execute('''
+            UPDATE gsm_alerts
+            SET acknowledged = 1, acknowledged_at = CURRENT_TIMESTAMP,
+                acknowledged_by = ?, notes = ?
+            WHERE id = ?
+        ''', (acknowledged_by, notes, alert_id))
+        return cursor.rowcount > 0
+
+
+def get_gsm_alert_summary() -> dict:
+    """Get summary counts of GSM alerts by severity."""
+    with get_db() as conn:
+        cursor = conn.execute('''
+            SELECT severity, COUNT(*) as count
+            FROM gsm_alerts
+            WHERE acknowledged = 0
+            GROUP BY severity
+        ''')
+
+        summary = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'total': 0}
+        for row in cursor:
+            sev = row['severity'].lower()
+            if sev in summary:
+                summary[sev] = row['count']
+            summary['total'] += row['count']
+
+        return summary
+
+
+def add_gsm_silent_sms(
+    session_id: int,
+    client_id: int | None = None,
+    tower_pci: int | None = None,
+    sms_type: int = 0,
+    source_indicator: str | None = None
+) -> int:
+    """Log a detected silent SMS."""
+    with get_db() as conn:
+        cursor = conn.execute('''
+            INSERT INTO gsm_silent_sms
+            (session_id, client_id, tower_pci, sms_type, source_indicator)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (session_id, client_id, tower_pci, sms_type, source_indicator))
+        return cursor.lastrowid

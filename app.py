@@ -38,6 +38,8 @@ from utils.constants import (
     MAX_BT_DEVICE_AGE_SECONDS,
     MAX_VESSEL_AGE_SECONDS,
     MAX_DSC_MESSAGE_AGE_SECONDS,
+    MAX_GSM_TOWER_AGE_SECONDS,
+    MAX_GSM_CLIENT_AGE_SECONDS,
     QUEUE_MAX_SIZE,
 )
 import logging
@@ -156,6 +158,11 @@ dsc_lock = threading.Lock()
 tscm_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
 tscm_lock = threading.Lock()
 
+# GSM SPY (Cellular Intelligence)
+gsm_process = None
+gsm_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
+gsm_lock = threading.Lock()
+
 # ============================================
 # GLOBAL STATE DICTIONARIES
 # ============================================
@@ -185,6 +192,10 @@ ais_vessels = DataStore(max_age_seconds=MAX_VESSEL_AGE_SECONDS, name='ais_vessel
 # DSC (Digital Selective Calling) state - using DataStore for automatic cleanup
 dsc_messages = DataStore(max_age_seconds=MAX_DSC_MESSAGE_AGE_SECONDS, name='dsc_messages')
 
+# GSM SPY state - using DataStore for automatic cleanup
+gsm_towers = DataStore(max_age_seconds=MAX_GSM_TOWER_AGE_SECONDS, name='gsm_towers')
+gsm_clients = DataStore(max_age_seconds=MAX_GSM_CLIENT_AGE_SECONDS, name='gsm_clients')
+
 # Satellite state
 satellite_passes = []  # Predicted satellite passes (not auto-cleaned, calculated)
 
@@ -196,6 +207,8 @@ cleanup_manager.register(bt_beacons)
 cleanup_manager.register(adsb_aircraft)
 cleanup_manager.register(ais_vessels)
 cleanup_manager.register(dsc_messages)
+cleanup_manager.register(gsm_towers)
+cleanup_manager.register(gsm_clients)
 
 
 # ============================================
@@ -528,6 +541,7 @@ def health_check() -> Response:
             'wifi': wifi_process is not None and (wifi_process.poll() is None if wifi_process else False),
             'bluetooth': bt_process is not None and (bt_process.poll() is None if bt_process else False),
             'dsc': dsc_process is not None and (dsc_process.poll() is None if dsc_process else False),
+            'gsm': gsm_process is not None and (gsm_process.poll() is None if gsm_process else False),
         },
         'data': {
             'aircraft_count': len(adsb_aircraft),
@@ -536,6 +550,8 @@ def health_check() -> Response:
             'wifi_clients_count': len(wifi_clients),
             'bt_devices_count': len(bt_devices),
             'dsc_messages_count': len(dsc_messages),
+            'gsm_towers_count': len(gsm_towers),
+            'gsm_clients_count': len(gsm_clients),
         }
     })
 

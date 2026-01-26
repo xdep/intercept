@@ -21,6 +21,7 @@ def register_blueprints(app):
     from .listening_post import listening_post_bp
     from .tscm import tscm_bp, init_tscm_state
     from .spy_stations import spy_stations_bp
+    from .gsm import gsm_bp, init_gsm_state
 
     app.register_blueprint(pager_bp)
     app.register_blueprint(sensor_bp)
@@ -41,8 +42,13 @@ def register_blueprints(app):
     app.register_blueprint(listening_post_bp)
     app.register_blueprint(tscm_bp)
     app.register_blueprint(spy_stations_bp)
+    app.register_blueprint(gsm_bp)  # GSM SPY cellular intelligence
 
     # Initialize TSCM state with queue and lock from app
     import app as app_module
     if hasattr(app_module, 'tscm_queue') and hasattr(app_module, 'tscm_lock'):
         init_tscm_state(app_module.tscm_queue, app_module.tscm_lock)
+
+    # Initialize GSM state with queue and lock from app
+    if hasattr(app_module, 'gsm_queue') and hasattr(app_module, 'gsm_lock'):
+        init_gsm_state(app_module.gsm_queue, app_module.gsm_lock)

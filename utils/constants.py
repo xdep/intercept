@@ -254,3 +254,39 @@ MAX_DSC_MESSAGE_AGE_SECONDS = 3600  # 1 hour
 
 # DSC process termination timeout
 DSC_TERMINATE_TIMEOUT = 3
+
+
+# =============================================================================
+# GSM SPY (Cellular Intelligence)
+# =============================================================================
+
+# Default LTE bands to scan (varies by region)
+DEFAULT_GSM_LTE_BANDS = [1, 3, 7, 20]
+
+# srsRAN cell search timeout per EARFCN (seconds)
+GSM_CELL_SEARCH_TIMEOUT = 10
+
+# Maximum age for detected towers before cleanup (seconds)
+MAX_GSM_TOWER_AGE_SECONDS = 3600  # 1 hour
+
+# Maximum age for observed clients before cleanup (seconds)
+MAX_GSM_CLIENT_AGE_SECONDS = 600  # 10 minutes
+
+# Stingray detection RSRP threshold (dBm) - unusually strong signal
+STINGRAY_RSRP_THRESHOLD = -70
+
+# Stingray score thresholds (0-100)
+STINGRAY_SCORE_WARNING = 50
+STINGRAY_SCORE_CRITICAL = 75
+
+# GSM SSE update interval (seconds)
+GSM_UPDATE_INTERVAL = 1.0
+
+# Cell tower database import batch size
+CELL_DB_IMPORT_BATCH_SIZE = 10000
+
+# GSM process termination timeout
+GSM_TERMINATE_TIMEOUT = 5
+
+# R-tree spatial query default radius (km)
+GSM_DEFAULT_SEARCH_RADIUS_KM = 50

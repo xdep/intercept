@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GSM SPY // INTERCEPT - Cellular Intelligence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gsm_dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/responsive.css') }}">
+</head>
+<body>
+    <!-- Radar background effects -->
+    <div class="radar-bg"></div>
+    <div class="scanline"></div>
+
+    <header class="header">
+        <div class="logo">
+            GSM SPY
+            <span>// INTERCEPT - Cellular Intelligence</span>
+        </div>
+        <div class="status-bar">
+            <a href="/" class="back-link">Main Dashboard</a>
+        </div>
+    </header>
+
+    <div class="stats-strip">
+        <div class="stats-strip-inner">
+            <div class="strip-stat">
+                <span class="strip-value" id="stripTowers">0</span>
+                <span class="strip-label">TOWERS</span>
+            </div>
+            <div class="strip-stat">
+                <span class="strip-value" id="stripClients">0</span>
+                <span class="strip-label">CLIENTS</span>
+            </div>
+            <div class="strip-stat alert-stat" id="alertStat">
+                <span class="strip-value" id="stripAlerts">0</span>
+                <span class="strip-label">ALERTS</span>
+            </div>
+            <div class="strip-stat">
+                <span class="strip-value" id="stripRegion">--</span>
+                <span class="strip-label">REGION</span>
+            </div>
+            <div class="strip-divider"></div>
+            <div class="strip-stat signal-stat" title="Signal quality">
+                <span class="strip-value" id="stripSignal">--</span>
+                <span class="strip-label">SIGNAL</span>
+            </div>
+            <div class="strip-stat session-stat">
+                <span class="strip-value" id="stripSession">00:00:00</span>
+                <span class="strip-label">SESSION</span>
+            </div>
+            <div class="strip-divider"></div>
+            <div class="strip-status">
+                <div class="status-dot" id="trackingDot"></div>
+                <span id="trackingStatus">STANDBY</span>
+            </div>
+            <div class="strip-time" id="utcTime">--:--:-- UTC</div>
+        </div>
+    </div>
+
+    <main class="dashboard">
+        <div class="main-display">
+            <div id="cellMap"></div>
+        </div>
+
+        <div class="sidebar">
+            <div class="panel tower-details">
+                <div class="panel-header">
+                    <span>TOWER DETAILS</span>
+                    <div class="panel-indicator"></div>
+                </div>
+                <div class="tower-info" id="towerInfo">
+                    <div class="no-tower">
+                        <div class="no-tower-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 21V8a2 2 0 0 1 2-2h2"/>
+                                <path d="M7 21V4a2 2 0 0 1 2-2h2"/>
+                                <path d="M11 21V8a2 2 0 0 1 2-2h2"/>
+                                <path d="M15 21V4a2 2 0 0 1 2-2h2"/>
+                                <path d="M19 21V8a2 2 0 0 1 2-2"/>
+                            </svg>
+                        </div>
+                        <div>Select a tower</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel client-list">
+                <div class="panel-header">
+                    <span>TRACKED CLIENTS</span>
+                    <div class="panel-indicator" id="clientIndicator"></div>
+                </div>
+                <div class="client-list-content" id="clientList">
+                    <div class="no-tower">
+                        <div>No clients detected</div>
+                        <div style="font-size: 10px; margin-top: 5px;">Start scanning to begin</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel alert-list">
+                <div class="panel-header">
+                    <span>SECURITY ALERTS</span>
+                    <div class="panel-indicator" id="alertIndicator"></div>
+                </div>
+                <div class="alert-list-content" id="alertList">
+                    <div class="no-tower">
+                        <div>No alerts</div>
+                        <div style="font-size: 10px; margin-top: 5px;">Monitoring for threats</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-bar">
+            <div class="control-group">
+                <span class="control-group-label">DISPLAY</span>
+                <div class="control-group-items">
+                    <label title="Show distance rings"><input type="checkbox" id="showRings" checked onchange="toggleRings()"> Rings</label>
+                    <label title="Show alert markers"><input type="checkbox" id="showAlerts" checked onchange="toggleAlertMarkers()"> Alerts</label>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <span class="control-group-label">REGION</span>
+                <div class="control-group-items">
+                    <select id="regionSelect" onchange="updateRegion()">
+                        <option value="">Auto-detect</option>
+                        <option value="US">United States</option>
+                        <option value="GB">United Kingdom</option>
+                        <option value="DE">Germany</option>
+                        <option value="FR">France</option>
+                        <option value="AU">Australia</option>
+                        <option value="JP">Japan</option>
+                        <option value="KR">South Korea</option>
+                        <option value="CN">China</option>
+                        <option value="EU">Europe (Generic)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <span class="control-group-label">BANDS</span>
+                <div class="control-group-items" id="bandCheckboxes">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <div class="control-group">
+                <span class="control-group-label">SDR</span>
+                <div class="control-group-items">
+                    <select id="deviceSelect" title="SDR device">
+                        <option value="0">SDR 0</option>
+                    </select>
+                    <input type="number" id="gainInput" value="40" min="0" max="100" style="width: 50px;" title="Gain">
+                </div>
+            </div>
+
+            <div class="control-group privacy-group">
+                <span class="control-group-label">PRIVACY</span>
+                <div class="control-group-items">
+                    <select id="privacySelect" onchange="updatePrivacy()" title="Privacy mode">
+                        <option value="standard">Standard</option>
+                        <option value="strict">Strict</option>
+                        <option value="research">Research</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="control-group tracking-group">
+                <span class="control-group-label">SCANNING</span>
+                <div class="control-group-items">
+                    <button class="start-btn" id="startBtn" onclick="toggleScanning()">START</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // State
+        let cellMap = null;
+        let towers = {};
+        let clients = {};
+        let alerts = [];
+        let markers = {};
+        let clientMarkers = {};
+        let alertMarkers = {};
+        let selectedTower = null;
+        let eventSource = null;
+        let isScanning = false;
+
+        // Observer location
+        let observerLocation = { lat: 51.5074, lon: -0.1278 };
+        let rangeRingsLayer = null;
+        let observerMarker = null;
+
+        // Region and bands
+        let currentRegion = null;
+        let selectedBands = [];
+
+        // Statistics
+        let stats = {
+            sessionStart: null,
+            towersDetected: 0,
+            clientsObserved: 0,
+            alertCount: 0,
+        };
+
+        // Session timer
+        let sessionTimerInterval = null;
+
+        // Tower SVG icon
+        const TOWER_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 21V10"/>
+            <path d="M20 21V10"/>
+            <path d="M12 3L4 10"/>
+            <path d="M12 3L20 10"/>
+            <path d="M4 10L12 17L20 10"/>
+            <path d="M12 17V21"/>
+        </svg>`;
+
+        // Client icon
+        const CLIENT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="5" y="2" width="14" height="20" rx="2"/>
+            <line x1="12" y1="18" x2="12" y2="18"/>
+        </svg>`;
+
+        // Create tower marker icon
+        function createTowerIcon(score, isSelected = false) {
+            const size = 28;
+            let color = '#22c55e'; // Green
+            let scoreClass = 'score-low';
+
+            if (score >= 75) {
+                color = '#ef4444'; // Red
+                scoreClass = 'score-critical';
+            } else if (score >= 50) {
+                color = '#f59e0b'; // Orange
+                scoreClass = 'score-high';
+            } else if (score >= 25) {
+                color = '#eab308'; // Yellow
+                scoreClass = 'score-medium';
+            }
+
+            const glowSize = isSelected ? '8px' : '4px';
+            const glowColor = isSelected ? 'rgba(255,255,255,0.8)' : color;
+
+            return L.divIcon({
+                className: `tower-marker ${scoreClass}` + (isSelected ? ' selected' : ''),
+                html: `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}" stroke="${color}" stroke-width="1" style="filter: drop-shadow(0 0 ${glowSize} ${glowColor});">
+                    <path d="M4 21V10M20 21V10M12 3L4 10M12 3L20 10M4 10L12 17L20 10M12 17V21"/>
+                </svg>`,
+                iconSize: [size, size],
+                iconAnchor: [size/2, size/2]
+            });
+        }
+
+        // Initialize map
+        function initMap() {
+            // Load saved location
+            const saved = localStorage.getItem('gsm_observerLocation');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (parsed.lat && parsed.lon) {
+                        observerLocation = parsed;
+                    }
+                } catch (e) {}
+            }
+
+            cellMap = L.map('cellMap', {
+                center: [observerLocation.lat, observerLocation.lon],
+                zoom: 12,
+                zoomControl: true
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(cellMap);
+
+            // Add observer marker
+            observerMarker = L.circleMarker([observerLocation.lat, observerLocation.lon], {
+                radius: 8,
+                fillColor: '#ff6b35',
+                color: '#ff6b35',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.5
+            }).addTo(cellMap);
+            observerMarker.bindTooltip('Observer', { permanent: false, direction: 'top' });
+
+            toggleRings();
+            loadDevices();
+            loadRegion();
+            updateClock();
+            setInterval(updateClock, 1000);
+        }
+
+        function loadDevices() {
+            fetch('/devices')
+                .then(r => r.json())
+                .then(devices => {
+                    const select = document.getElementById('deviceSelect');
+                    select.innerHTML = '';
+                    if (devices.length === 0) {
+                        select.innerHTML = '<option value="0">No devices</option>';
+                    } else {
+                        devices.forEach((d, i) => {
+                            const opt = document.createElement('option');
+                            opt.value = d.index;
+                            opt.textContent = `SDR ${d.index}: ${d.name}`;
+                            select.appendChild(opt);
+                        });
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function loadRegion() {
+            fetch('/gsm/region')
+                .then(r => r.json())
+                .then(data => {
+                    currentRegion = data;
+                    document.getElementById('stripRegion').textContent = data.country_code;
+
+                    // Set region select
+                    const regionSelect = document.getElementById('regionSelect');
+                    if (data.detection_method !== 'manual') {
+                        regionSelect.value = '';
+                    } else {
+                        regionSelect.value = data.country_code;
+                    }
+
+                    // Populate band checkboxes
+                    updateBandCheckboxes(data.bands);
+                })
+                .catch(err => {
+                    console.error('Failed to load region:', err);
+                    // Default bands
+                    updateBandCheckboxes([1, 3, 7, 20]);
+                });
+        }
+
+        function updateBandCheckboxes(bands) {
+            const container = document.getElementById('bandCheckboxes');
+            const commonBands = [1, 2, 3, 4, 5, 7, 8, 12, 13, 17, 20, 28, 38, 40, 41];
+
+            container.innerHTML = commonBands.map(b => {
+                const checked = bands.includes(b) ? 'checked' : '';
+                return `<label title="Band ${b}"><input type="checkbox" value="${b}" ${checked} onchange="updateSelectedBands()"> B${b}</label>`;
+            }).join('');
+
+            selectedBands = bands;
+        }
+
+        function updateSelectedBands() {
+            const checkboxes = document.querySelectorAll('#bandCheckboxes input:checked');
+            selectedBands = Array.from(checkboxes).map(cb => parseInt(cb.value));
+        }
+
+        function updateRegion() {
+            const region = document.getElementById('regionSelect').value;
+            if (!region) {
+                loadRegion();
+                return;
+            }
+
+            fetch('/gsm/region', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ country_code: region })
+            })
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('stripRegion').textContent = data.country_code;
+                updateBandCheckboxes(data.bands);
+            });
+        }
+
+        function updatePrivacy() {
+            const mode = document.getElementById('privacySelect').value;
+
+            if (mode === 'research') {
+                // Show warning and require confirmation
+                if (!confirm('WARNING: Research Mode enables IMSI/TMSI capture.\n\nThis may be illegal without proper authorization.\n\nOnly use for:\n- Authorized security research\n- Law enforcement with warrants\n- Network operator testing\n- Controlled lab environments\n\nDo you have proper legal authorization?')) {
+                    document.getElementById('privacySelect').value = 'standard';
+                    return;
+                }
+
+                fetch('/gsm/privacy/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: 'research', confirmed: true })
+                });
+            } else {
+                fetch('/gsm/privacy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+            }
+        }
+
+        function toggleRings() {
+            if (rangeRingsLayer) {
+                cellMap.removeLayer(rangeRingsLayer);
+                rangeRingsLayer = null;
+            }
+
+            if (!document.getElementById('showRings').checked) return;
+
+            const rings = [];
+            const metersPerRing = [1000, 5000, 10000, 25000]; // 1km, 5km, 10km, 25km
+
+            metersPerRing.forEach(m => {
+                const circle = L.circle([observerLocation.lat, observerLocation.lon], {
+                    radius: m,
+                    fill: false,
+                    color: '#ff6b35',
+                    opacity: 0.3,
+                    weight: 1,
+                    dashArray: '4 4'
+                });
+                rings.push(circle);
+            });
+
+            rangeRingsLayer = L.layerGroup(rings).addTo(cellMap);
+        }
+
+        function toggleAlertMarkers() {
+            const show = document.getElementById('showAlerts').checked;
+            Object.values(alertMarkers).forEach(marker => {
+                if (show) {
+                    marker.addTo(cellMap);
+                } else {
+                    cellMap.removeLayer(marker);
+                }
+            });
+        }
+
+        function toggleScanning() {
+            if (isScanning) {
+                stopScanning();
+            } else {
+                startScanning();
+            }
+        }
+
+        function startScanning() {
+            const device = document.getElementById('deviceSelect').value;
+            const gain = document.getElementById('gainInput').value;
+            const region = document.getElementById('regionSelect').value;
+            const privacy = document.getElementById('privacySelect').value;
+
+            fetch('/gsm/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device,
+                    gain,
+                    region: region || null,
+                    bands: selectedBands,
+                    privacy_mode: privacy
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'started' || data.status === 'already_running') {
+                    isScanning = true;
+                    document.getElementById('startBtn').textContent = 'STOP';
+                    document.getElementById('startBtn').classList.add('active');
+                    document.getElementById('trackingDot').classList.add('active');
+                    document.getElementById('trackingStatus').textContent = 'SCANNING';
+                    startSessionTimer();
+                    startSSE();
+                } else {
+                    alert(data.message || 'Failed to start');
+                }
+            })
+            .catch(err => alert('Error: ' + err.message));
+        }
+
+        function stopScanning() {
+            fetch('/gsm/stop', { method: 'POST' })
+            .then(r => r.json())
+            .then(() => {
+                isScanning = false;
+                document.getElementById('startBtn').textContent = 'START';
+                document.getElementById('startBtn').classList.remove('active');
+                document.getElementById('trackingDot').classList.remove('active');
+                document.getElementById('trackingStatus').textContent = 'STANDBY';
+                stopSessionTimer();
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                }
+            });
+        }
+
+        function startSSE() {
+            if (eventSource) eventSource.close();
+
+            eventSource = new EventSource('/gsm/stream');
+            eventSource.onmessage = function(e) {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'tower') {
+                        updateTower(data);
+                    } else if (data.type === 'client') {
+                        updateClient(data);
+                    } else if (data.type === 'alert') {
+                        addAlert(data);
+                    }
+                } catch (err) {}
+            };
+
+            eventSource.onerror = function() {
+                setTimeout(() => {
+                    if (isScanning) startSSE();
+                }, 2000);
+            };
+        }
+
+        function updateTower(data) {
+            const key = `${data.earfcn}_${data.pci}`;
+            towers[key] = data;
+
+            // Update marker
+            updateTowerMarker(data);
+
+            // Update stats
+            stats.towersDetected = Object.keys(towers).length;
+            updateStats();
+            updateTowerList();
+
+            // Update selected tower if it's the same
+            if (selectedTower && selectedTower.earfcn === data.earfcn && selectedTower.pci === data.pci) {
+                showTowerDetails(data);
+            }
+        }
+
+        function updateTowerMarker(tower) {
+            const key = `${tower.earfcn}_${tower.pci}`;
+            const score = tower.stingray_score || 0;
+            const isSelected = selectedTower && selectedTower.earfcn === tower.earfcn && selectedTower.pci === tower.pci;
+
+            // Default position (will be updated when we get real coordinates)
+            // For now, place around observer with some randomness based on PCI
+            const lat = observerLocation.lat + (Math.sin(tower.pci * 0.1) * 0.05);
+            const lon = observerLocation.lon + (Math.cos(tower.pci * 0.1) * 0.05);
+
+            if (markers[key]) {
+                markers[key].setIcon(createTowerIcon(score, isSelected));
+            } else {
+                markers[key] = L.marker([lat, lon], {
+                    icon: createTowerIcon(score, isSelected)
+                })
+                .addTo(cellMap)
+                .on('click', () => selectTower(key));
+
+                // Popup
+                const freq = tower.frequency_mhz ? `${tower.frequency_mhz.toFixed(1)} MHz` : 'Unknown';
+                markers[key].bindTooltip(
+                    `PCI: ${tower.pci}<br>EARFCN: ${tower.earfcn}<br>${freq}`,
+                    { direction: 'top' }
+                );
+            }
+        }
+
+        function selectTower(key) {
+            const prevKey = selectedTower ? `${selectedTower.earfcn}_${selectedTower.pci}` : null;
+            selectedTower = towers[key];
+
+            // Update marker styles
+            if (prevKey && markers[prevKey]) {
+                const prevScore = towers[prevKey]?.stingray_score || 0;
+                markers[prevKey].setIcon(createTowerIcon(prevScore, false));
+            }
+            if (markers[key]) {
+                const score = selectedTower?.stingray_score || 0;
+                markers[key].setIcon(createTowerIcon(score, true));
+            }
+
+            if (selectedTower) {
+                showTowerDetails(selectedTower);
+            }
+        }
+
+        function showTowerDetails(tower) {
+            const container = document.getElementById('towerInfo');
+            const score = tower.stingray_score || 0;
+            let scoreClass = 'low';
+            if (score >= 75) scoreClass = 'critical';
+            else if (score >= 50) scoreClass = 'high';
+            else if (score >= 25) scoreClass = 'medium';
+
+            const freq = tower.frequency_mhz ? `${tower.frequency_mhz.toFixed(1)} MHz` : '-';
+            const band = tower.band ? `B${tower.band}` : '-';
+            const dbMatch = tower.in_database ? 'Yes' : 'No';
+
+            container.innerHTML = `
+                <div class="tower-header">
+                    <div class="tower-icon">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ff6b35" stroke-width="2">
+                            <path d="M4 21V10M20 21V10M12 3L4 10M12 3L20 10M4 10L12 17L20 10M12 17V21"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="tower-name">Cell Tower</div>
+                        <div class="tower-pci">PCI: ${tower.pci} | EARFCN: ${tower.earfcn}</div>
+                    </div>
+                </div>
+                <div class="tower-data">
+                    <div class="data-item">
+                        <div class="data-label">Frequency</div>
+                        <div class="data-value">${freq}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Band</div>
+                        <div class="data-value">${band}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">RSRP</div>
+                        <div class="data-value">${tower.rsrp ? tower.rsrp + ' dBm' : '-'}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">RSRQ</div>
+                        <div class="data-value">${tower.rsrq ? tower.rsrq + ' dB' : '-'}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">SNR</div>
+                        <div class="data-value">${tower.snr ? tower.snr + ' dB' : '-'}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">In Database</div>
+                        <div class="data-value">${dbMatch}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">Encryption</div>
+                        <div class="data-value" style="color: ${tower.encryption === 'A5/0' || tower.encryption === 'EEA0' ? '#ef4444' : '#22c55e'}">${tower.encryption || 'Unknown'}</div>
+                    </div>
+                    <div class="data-item">
+                        <div class="data-label">PLMN</div>
+                        <div class="data-value">${tower.plmn || '-'}</div>
+                    </div>
+                    <div class="stingray-meter">
+                        <div class="stingray-label">Stingray Score</div>
+                        <div class="stingray-bar">
+                            <div class="stingray-fill ${scoreClass}" style="width: ${score}%"></div>
+                        </div>
+                        <div class="stingray-score" style="color: ${score >= 50 ? '#ef4444' : '#22c55e'}">${score}/100</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateTowerList() {
+            // Tower list is shown in the map, but we could add a list panel later
+        }
+
+        function updateClient(data) {
+            const key = data.rnti || data.tmsi || `client_${Date.now()}`;
+            clients[key] = data;
+            stats.clientsObserved = Object.keys(clients).length;
+            updateStats();
+            updateClientList();
+        }
+
+        function updateClientList() {
+            const container = document.getElementById('clientList');
+            const clientArray = Object.values(clients);
+
+            if (clientArray.length === 0) {
+                container.innerHTML = `
+                    <div class="no-tower">
+                        <div>No clients detected</div>
+                        <div style="font-size: 10px; margin-top: 5px;">Start scanning to begin</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = clientArray.slice(0, 20).map(c => {
+                const id = c.rnti || c.tmsi?.substring(0, 8) || 'Unknown';
+                const distance = c.distance_estimate_m ? `${(c.distance_estimate_m / 1000).toFixed(2)} km` : '-';
+                return `
+                    <div class="client-item">
+                        <div class="client-item-icon">${CLIENT_ICON}</div>
+                        <div class="client-item-info">
+                            <div class="client-item-id">RNTI: ${id}</div>
+                            <div class="client-item-tower">PCI: ${c.associated_pci || '-'}</div>
+                        </div>
+                        <div class="client-item-distance">${distance}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function addAlert(data) {
+            alerts.unshift(data);
+            stats.alertCount = alerts.length;
+
+            // Update alert stat
+            const alertStat = document.getElementById('alertStat');
+            alertStat.classList.toggle('has-alerts', alerts.length > 0);
+            document.getElementById('alertIndicator').classList.add('active');
+
+            updateStats();
+            updateAlertList();
+        }
+
+        function updateAlertList() {
+            const container = document.getElementById('alertList');
+
+            if (alerts.length === 0) {
+                container.innerHTML = `
+                    <div class="no-tower">
+                        <div>No alerts</div>
+                        <div style="font-size: 10px; margin-top: 5px;">Monitoring for threats</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = alerts.slice(0, 10).map(a => {
+                const severity = (a.severity || 'MEDIUM').toLowerCase();
+                const time = a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : '--:--';
+                return `
+                    <div class="alert-item ${severity}">
+                        <div class="alert-header">
+                            <span class="alert-severity ${severity}">${a.severity || 'MEDIUM'}</span>
+                            <span class="alert-time">${time}</span>
+                        </div>
+                        <div class="alert-title">${a.title || 'Security Alert'}</div>
+                        <div class="alert-description">${a.description || ''}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateStats() {
+            document.getElementById('stripTowers').textContent = stats.towersDetected;
+            document.getElementById('stripClients').textContent = stats.clientsObserved;
+            document.getElementById('stripAlerts').textContent = stats.alertCount;
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const utc = now.toISOString().slice(11, 19);
+            document.getElementById('utcTime').textContent = utc + ' UTC';
+        }
+
+        function startSessionTimer() {
+            if (!stats.sessionStart) {
+                stats.sessionStart = Date.now();
+            }
+            if (sessionTimerInterval) clearInterval(sessionTimerInterval);
+            sessionTimerInterval = setInterval(updateSessionTimer, 1000);
+        }
+
+        function stopSessionTimer() {
+            if (sessionTimerInterval) {
+                clearInterval(sessionTimerInterval);
+                sessionTimerInterval = null;
+            }
+        }
+
+        function updateSessionTimer() {
+            if (!stats.sessionStart) return;
+            const elapsed = Date.now() - stats.sessionStart;
+            const hours = Math.floor(elapsed / 3600000);
+            const mins = Math.floor((elapsed % 3600000) / 60000);
+            const secs = Math.floor((elapsed % 60000) / 1000);
+            document.getElementById('stripSession').textContent =
+                `${hours.toString().padStart(2,'0')}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>
